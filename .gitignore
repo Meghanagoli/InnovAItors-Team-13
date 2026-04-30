@@ -1,0 +1,11 @@
+node_modules/
+frontend/dist/
+frontend/node_modules/
+__pycache__/
+*.pyc
+.env
+credentials.json
+backend.log
+backend_log.txt
+frontend_log.txt
+.claude/
