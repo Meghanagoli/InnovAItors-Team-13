@@ -30,10 +30,10 @@ export default function Header() {
         <span style={{ fontSize: 12, color: '#FFFFFF', fontWeight: 600 }}>{title}</span>
       </div>
 
-      {/* Help link — will download user guide PDF once provided */}
+      {/* Help link — downloads user guide PDF */}
       <a
-        href="#"
-        onClick={e => e.preventDefault()}
+        href="/RealInsight_UserGuide.pdf"
+        download="RealInsight_UserGuide.pdf"
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           textDecoration: 'none', color: '#CBD5E1',
