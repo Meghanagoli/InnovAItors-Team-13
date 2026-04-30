@@ -6,6 +6,8 @@ __pycache__/
 .env
 credentials.json
 backend.log
+backend_err.log
+backend_err.txt
 backend_log.txt
 frontend_log.txt
 .claude/
