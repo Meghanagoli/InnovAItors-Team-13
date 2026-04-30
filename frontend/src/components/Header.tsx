@@ -30,6 +30,30 @@ export default function Header() {
         <span style={{ fontSize: 12, color: '#FFFFFF', fontWeight: 600 }}>{title}</span>
       </div>
 
+      {/* Help link — will download user guide PDF once provided */}
+      <a
+        href="#"
+        onClick={e => e.preventDefault()}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          textDecoration: 'none', color: '#CBD5E1',
+          fontSize: 13, fontWeight: 500,
+          padding: '4px 10px', borderRadius: 6,
+          transition: 'background 0.15s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.background = '#243D57')}
+        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+        title="Download User Guide"
+      >
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 18, height: 18, borderRadius: '50%',
+          border: '1.5px solid #CBD5E1',
+          fontSize: 11, fontWeight: 700, lineHeight: 1,
+          flexShrink: 0,
+        }}>?</span>
+        Help
+      </a>
     </header>
   );
 }

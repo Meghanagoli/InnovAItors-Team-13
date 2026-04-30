@@ -27,6 +27,7 @@ export interface ScorerInputs {
   totalOrders: number;
   selectedSolutions: string[];
   numSolutions: number;
+  netExtYear1Charge: number;
 }
 
 // ── Recommendation engine ─────────────────────────────────────────────────────

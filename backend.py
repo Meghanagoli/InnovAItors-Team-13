@@ -40,6 +40,9 @@ DATASET = "hck_data"
 P75_MTTI = 21.0   # low → medium boundary
 P90_MTTI = 55.0   # medium → high boundary
 
+# ── Leakage rate computed from historical cancellation data at startup ───────
+_leakage_rate: float = 0.37
+
 # ── Categorical cols used by the model ─────────────────────────────────────
 CAT_COLS = ["impl_type", "product_family", "sales_type",
             "business_type", "territory", "csm_model"]
@@ -100,7 +103,7 @@ def _cached(key: str, fn):
 
 # ── Global singletons ───────────────────────────────────────────────────────
 _client: Optional[bigquery.Client] = None
-_clf: Optional[xgb.XGBClassifier] = None
+_clf:    Optional[xgb.XGBClassifier] = None
 _reg: Optional[xgb.XGBRegressor] = None
 _encoders: dict = {}
 _feat_cols: list = []
@@ -296,6 +299,32 @@ def _train():
         _apply_bundle(bundle)
 
 
+def _load_leakage_rate():
+    """Compute historical non-conversion rate from SFDC_Order__c cancelled vs implemented."""
+    global _leakage_rate
+    try:
+        sql = f"""
+        SELECT ROUND(
+            SAFE_DIVIDE(
+                COUNTIF(Implementation_Status__c NOT IN ('Implemented', 'Backlog')),
+                COUNTIF(Implementation_Status__c != 'Backlog')
+            ), 4
+        ) AS rate
+        FROM `{PROJECT}.{DATASET}.SFDC_Order__c`
+        WHERE IsDeleted = false
+          AND Order_Create_Date__c >= '2020-01-01'
+        """
+        rows = list(bqclient().query(sql))
+        rate = float(rows[0]["rate"]) if rows and rows[0]["rate"] is not None else None
+        if rate is not None and 0.01 <= rate <= 0.99:
+            _leakage_rate = rate
+            print(f"[backend] Leakage rate from data: {rate:.1%}")
+        else:
+            print(f"[backend] Leakage rate out of range ({rate}), keeping default 0.37")
+    except Exception as e:
+        print(f"[backend] Could not compute leakage rate: {e} — using 0.37")
+
+
 def _load_opts():
     global _opts_cache
     print("[backend] Loading dropdown options …")
@@ -335,6 +364,7 @@ def _load_opts():
 async def lifespan(app: FastAPI):
     _train()
     _load_opts()
+    _load_leakage_rate()
     yield
 
 
@@ -364,6 +394,59 @@ def meta():
         total = sum(r["cnt"] for r in rows)
         return {"years": years, "totalBookings": total, "lastMonth": "2026-04"}
     return _cached("meta", _fetch)
+
+
+# ── /cohort/rolling12 ────────────────────────────────────────────────────────
+@app.get("/cohort/rolling12")
+def cohort_rolling12():
+    """Last 12 calendar months ending at the current month, with year-aware labels."""
+    sql = f"""
+    SELECT
+        CAST(EXTRACT(MONTH FROM o.Order_Create_Date__c) AS STRING)                         AS month,
+        CAST(EXTRACT(YEAR  FROM o.Order_Create_Date__c) AS STRING)                         AS yr,
+        COUNT(*)                                                                            AS total,
+        COUNTIF(o.Implementation_Status__c = 'Implemented'
+                AND COALESCE(o.Time_to_Implement_Days__c, 9999) <= {_p75})                 AS low,
+        COUNTIF(o.Implementation_Status__c = 'Implemented'
+                AND o.Time_to_Implement_Days__c > {_p75}
+                AND o.Time_to_Implement_Days__c <= {_p90})                                 AS medium,
+        COUNTIF(o.Implementation_Status__c = 'Backlog'
+                OR (o.Implementation_Status__c = 'Implemented'
+                    AND o.Time_to_Implement_Days__c > {_p90}))                             AS high,
+        ROUND(AVG(CASE WHEN o.Implementation_Status__c = 'Implemented'
+                       THEN o.Time_to_Implement_Days__c END), 1)                           AS avgMtti
+    FROM `{PROJECT}.{DATASET}.SFDC_Order__c` o
+    WHERE o.Order_Create_Date__c >= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 11 MONTH), MONTH)
+      AND o.Order_Create_Date__c <  DATE_ADD(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 1 MONTH)
+      AND o.IsDeleted = false
+    GROUP BY month, yr
+    ORDER BY CAST(yr AS INT64), CAST(month AS INT64)
+    """
+    def _fetch():
+        abbr = {str(i): calendar.month_abbr[i] for i in range(1, 13)}
+        rows = list(bqclient().query(sql))
+        result = []
+        for r in rows:
+            m   = str(r["month"])
+            yr  = str(r["yr"])
+            tot = int(r["total"])
+            lo  = int(r["low"])
+            med = int(r["medium"])
+            hi  = int(r["high"])
+            mtti = float(r["avgMtti"] or 0)
+            result.append({
+                "month":    f"{yr}{m.zfill(2)}",          # unique key e.g. "202505"
+                "label":    f"{abbr.get(m, m)} '{yr[-2:]}",  # "May '25"
+                "total":    tot,
+                "low":      lo,
+                "medium":   med,
+                "high":     hi,
+                "avgMtti":  round(mtti, 1),
+                "avgScore": _avg_score(tot, hi, med),
+                "isSpike":  (hi / tot > 0.15) if tot else False,
+            })
+        return result
+    return _cached("cohort:rolling12", _fetch)
 
 
 # ── /cohort ──────────────────────────────────────────────────────────────────
@@ -440,6 +523,67 @@ def cohort(
             })
         return result
     cache_key = f"cohort:{year}:{sales_type}:{territory}:{product}:{impl_type}"
+    return _cached(cache_key, _fetch)
+
+
+# ── /cohort/bookings ─────────────────────────────────────────────────────────
+@app.get("/cohort/bookings")
+def cohort_bookings(year: str = "2025", month: str = "1"):
+    cache_key = f"cohort_bookings:{year}:{month}"
+    sql = f"""
+    SELECT
+        o.Id                                                                                AS order_id,
+        COALESCE(a.Name, 'Unknown PMC')                                                    AS pmc_name,
+        COALESCE(o.Product_Name__c, o.Product_Family__c, 'Unknown')                        AS product,
+        COALESCE(o.Product_Family__c, 'Unknown')                                           AS product_family,
+        COALESCE(o.Implementation_Type_New__c, 'Unknown')                                  AS impl_type,
+        COALESCE(o.Sales_Type__c, 'Unknown')                                               AS sales_type,
+        COALESCE(a.Business_Type__c, 'Unknown')                                            AS business_type,
+        COALESCE(a.Territory__c, 'Unknown')                                                AS territory,
+        COALESCE(a.CSM_Coverage_Model__c, 'Unknown')                                       AS csm_model,
+        COALESCE(o.Total_On_Hold_Days__c, 0)                                               AS on_hold_days,
+        COALESCE(o.Total_Referred_to_Sales_Days__c, 0)                                     AS referred_sales_days,
+        COALESCE(o.Total_Initial_Outreach_Days__c, 0)                                      AS initial_outreach_days,
+        COALESCE(o.Total_PMC_Total_Properties_f__c, 0)                                     AS pmc_properties,
+        COALESCE(o.Total_PMC_Total_Units_f__c, 0)                                          AS pmc_units,
+        IF(o.Dependency_Delay__c IS TRUE, 1, 0)                                            AS dependency_delay,
+        COALESCE(o.Total_Blocked_Days__c, 0)                                               AS blocked_days,
+        IF(o.PMC_Has_Previously_Deployed_Product__c IS TRUE, 1, 0)                        AS prev_deployed,
+        IF(o.Special_Handling__c IS TRUE, 1, 0)                                            AS special_handling,
+        COALESCE(o.SLA_Violation_Count__c, 0)                                              AS sla_violations,
+        COALESCE(o.Implementation_Status__c, 'Unknown')                                    AS status
+    FROM `{PROJECT}.{DATASET}.SFDC_Order__c` o
+    LEFT JOIN `{PROJECT}.{DATASET}.SFDC_Accounts` a ON o.PMC__c = a.Id
+    WHERE EXTRACT(YEAR  FROM o.Order_Create_Date__c) = {int(year)}
+      AND EXTRACT(MONTH FROM o.Order_Create_Date__c) = {int(month)}
+      AND o.IsDeleted = false
+    ORDER BY o.Implementation_Status__c DESC
+    LIMIT 20
+    """
+    def _fetch():
+        df = _q(sql)
+        if df.empty:
+            return []
+        df = df.reset_index(drop=True)
+        X      = _encode_df(df)
+        probs  = _clf.predict_proba(X)[:, 1]
+        mttis  = np.clip(np.expm1(_reg.predict(X)), 1, 999)
+        scores = np.clip(np.round(probs * 100).astype(int), 0, 100)
+        result = []
+        for i in range(len(df)):
+            score = int(scores[i])
+            mtti  = int(round(float(mttis[i])))
+            result.append({
+                "orderId": str(df.iloc[i]["order_id"])[-10:],
+                "pmcName": str(df.iloc[i]["pmc_name"])[:50],
+                "product": str(df.iloc[i]["product"])[:40],
+                "score":   score,
+                "mtti":    mtti,
+                "tier":    _risk_tier(score),
+                "status":  str(df.iloc[i]["status"]),
+            })
+        result.sort(key=lambda x: (x["tier"] != "High", x["tier"] != "Medium"))
+        return result
     return _cached(cache_key, _fetch)
 
 
@@ -535,7 +679,6 @@ def options():
 QUARTER_MONTHS = {
     "Q1": (1, 3), "Q2": (4, 6), "Q3": (7, 9), "Q4": (10, 12),
 }
-LEAKAGE_RATE = 0.37
 
 
 @app.get("/finance")
@@ -573,7 +716,7 @@ def finance(quarter: str = "Full Year", year: str = "2025"):
             avgMtti  = float(r["avgMtti"] or 0)
             estValue = float(r["estValue"] or 0)
             hrv      = estValue * (high / total) if total else 0
-            lkr      = hrv * LEAKAGE_RATE
+            lkr      = hrv * _leakage_rate
             rows_out.append({
                 "month":         m,
                 "label":         month_map.get(m, m),
@@ -593,11 +736,12 @@ def finance(quarter: str = "Full Year", year: str = "2025"):
         return {
             "rows": rows_out,
             "totals": {
-                "bookings": tot_b,
-                "estValue": round(tot_v, 0),
-                "highValue": round(tot_hv, 0),
-                "leakage":   round(tot_lk, 0),
-                "avgMtti":   round(avg_mtti, 1),
+                "bookings":    tot_b,
+                "estValue":    round(tot_v, 0),
+                "highValue":   round(tot_hv, 0),
+                "leakage":     round(tot_lk, 0),
+                "avgMtti":     round(avg_mtti, 1),
+                "leakageRate": round(_leakage_rate, 4),
             },
         }
     return _cached(f"finance:{quarter}:{year}", _fetch)
@@ -787,8 +931,9 @@ def predict(req: PredictRequest):
     X = _encode_row(row)
     prob  = float(_clf.predict_proba(X)[0][1])
     score = int(min(100, max(0, round(prob * 100))))
-    mtti  = float(max(1.0, np.expm1(_reg.predict(X)[0])))
-    tier  = _mtti_tier(mtti)
+    mtti       = float(max(1.0, np.expm1(_reg.predict(X)[0])))
+    score_tier = _risk_tier(score)
+    tier       = _mtti_tier(mtti)
 
     # Top factors with descriptions
     raw_factors = _compute_factors(row)
@@ -871,7 +1016,7 @@ Do not start with "Based on" or repeat the risk score. Speak as if advising a co
 
     return {
         "risk_score":     score,
-        "risk_tier":      tier,
+        "risk_tier":      score_tier,
         "mtti_pred":      round(mtti, 1),
         "top_factors":    top_factors,
         "recommendation": recommendation,

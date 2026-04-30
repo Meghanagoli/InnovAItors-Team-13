@@ -4,7 +4,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer
 } from 'recharts';
 import { api, getCached } from '../api/client';
-import type { MonthlyRow, ProductRow, TerritoryRow, ReasonRow, MetaResponse, ReasonsResponse } from '../api/client';
+import type { MonthlyRow, ProductRow, TerritoryRow, ReasonRow, MetaResponse, ReasonsResponse, FinanceResponse } from '../api/client';
 
 const COLORS = { low: '#22C55E', medium: '#F59E0B', high: '#EF4444' };
 
@@ -28,14 +28,15 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export default function DashboardPage() {
   const [filter, setFilter] = useState({ product: '', territory: '' });
-  const _meta = getCached<MetaResponse>('/meta');
+  const _meta     = getCached<MetaResponse>('/meta');
   const _initYear = _meta?.years[0] ?? '';
-  const [year, setYear]               = useState(_initYear);
+  // '' = rolling 12-month view (default); a year string = calendar-year view
+  const [year, setYear]               = useState('');
   const [years, setYears]             = useState<string[]>(_meta?.years ?? []);
   const [products, setProducts]         = useState<ProductRow[]>(() => getCached<ProductRow[]>('/products') ?? []);
   const [territories, setTerritories]   = useState<TerritoryRow[]>(() => getCached<TerritoryRow[]>('/territories') ?? []);
   const [monthlyData, setMonthlyData]   = useState<MonthlyRow[]>(() =>
-    _initYear ? getCached<MonthlyRow[]>(`/cohort?year=${_initYear}&sales_type=&territory=&product=&impl_type=`) ?? [] : []
+    getCached<MonthlyRow[]>('/cohort/rolling12') ?? []
   );
   const [backlogReasons, setBacklog]    = useState<ReasonRow[]>(() =>
     _initYear ? getCached<ReasonsResponse>(`/reasons?year=${_initYear}`)?.backlog ?? [] : []
@@ -43,20 +44,24 @@ export default function DashboardPage() {
   const [cancelReasons, setCancel]      = useState<ReasonRow[]>(() =>
     _initYear ? getCached<ReasonsResponse>(`/reasons?year=${_initYear}`)?.cancellation ?? [] : []
   );
+  const [finData, setFinData]           = useState<FinanceResponse | null>(() =>
+    _initYear ? getCached<FinanceResponse>(`/finance?quarter=Full%20Year&year=${_initYear}`) ?? null : null
+  );
   const [loading, setLoading]           = useState(() => !getCached<ProductRow[]>('/products'));
 
+  const isRolling = year === '' || year === 'rolling';
+
   useEffect(() => {
-    api.meta().then(m => {
-      setYears(m.years);
-      if (!year && m.years.length > 0) setYear(m.years[0]);
-    }).catch(() => {});
+    api.meta().then(m => { setYears(m.years); }).catch(() => {});
   }, []);
 
   useEffect(() => {
-    const activeYear = year || years[0] || '2025';
-    if (!getCached(`/cohort?year=${activeYear}&sales_type=&territory=&product=&impl_type=`)) setLoading(true);
-    Promise.all([api.cohort(activeYear), api.products(), api.territories(), api.reasons(activeYear)])
-      .then(([c, p, t, r]) => { setMonthlyData(c); setProducts(p); setTerritories(t); setBacklog(r.backlog); setCancel(r.cancellation); })
+    const ctxYear = isRolling ? (_initYear || years[0] || '2026') : year;
+    if (isRolling ? !getCached('/cohort/rolling12') : !getCached(`/cohort?year=${ctxYear}&sales_type=&territory=&product=&impl_type=`))
+      setLoading(true);
+    const cohortPromise = isRolling ? api.cohortRolling() : api.cohort(ctxYear);
+    Promise.all([cohortPromise, api.products(), api.territories(), api.reasons(ctxYear), api.finance('Full Year', ctxYear)])
+      .then(([c, p, t, r, f]) => { setMonthlyData(c); setProducts(p); setTerritories(t); setBacklog(r.backlog); setCancel(r.cancellation); setFinData(f); })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [year, years]);
@@ -100,11 +105,12 @@ export default function DashboardPage() {
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <div className="page-title">Overview</div>
-          <div className="page-subtitle">{year || years[0] || '—'} Implementation bookings — risk distribution and trends</div>
+          <div className="page-subtitle">{isRolling ? 'Latest 12 months' : year} — implementation bookings, risk distribution and trends</div>
         </div>
         <div className="filter-bar" style={{ marginBottom: 0 }}>
           <select value={year} onChange={e => setYear(e.target.value)}>
             <option value="" disabled>Year</option>
+            <option value="rolling">Latest 12 months</option>
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
           <select value={filter.product} onChange={e => setFilter(f => ({ ...f, product: e.target.value }))}>
@@ -122,7 +128,7 @@ export default function DashboardPage() {
       {(() => {
         const highRiskPct   = parseFloat(highPct);
         const mtti          = typeof avgMtti === 'number' ? Math.round(avgMtti) : 0;
-        const revenueAtRisk = Math.round(totals.high * 30000 / 1_000_000);
+        const revenueAtRisk = finData ? Math.round(finData.totals.leakage / 1_000_000) : Math.round(totals.high * 30000 / 1_000_000);
 
         // thresholds → color tokens
         const bookingColor = '#3B82F6';  // always neutral blue (raw count, no good/bad threshold)
@@ -156,8 +162,8 @@ export default function DashboardPage() {
             <div className="kpi-card" style={{ border: `1.5px solid #BFDBFE`, background: '#EFF6FF', borderRadius: 12, padding: '18px 20px' }}>
               <div className="kpi-label">Total Bookings</div>
               <div className="kpi-value" style={{ color: bookingColor }}>{totalBookings.toLocaleString()}</div>
-              <div className="kpi-sub">{selectedTerritory ? selectedTerritory.name : `${year || years[0] || ''} YTD`}</div>
-              <div style={{ marginTop: 8, fontSize: 12, color: '#1D4ED8', fontWeight: 500 }}>{year || years[0] || ''} YTD · BigQuery</div>
+              <div className="kpi-sub">{selectedTerritory ? selectedTerritory.name : isRolling ? 'Latest 12 months' : `${year} YTD`}</div>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#1D4ED8', fontWeight: 500 }}>{isRolling ? 'Rolling 12 months · BigQuery' : `${year} YTD · BigQuery`}</div>
             </div>
 
             {/* High Risk Bookings */}
@@ -172,7 +178,7 @@ export default function DashboardPage() {
             <div className="kpi-card" style={cardStyle(revBg, revBorder)}>
               <div className="kpi-label">Revenue at Risk (Est.)</div>
               <div className="kpi-value" style={{ color: revColor }}>${revenueAtRisk.toLocaleString()}M</div>
-              <div className="kpi-sub">37% leakage on high-risk</div>
+              <div className="kpi-sub">{finData && finData.totals.estValue > 0 ? `${(finData.totals.leakage / finData.totals.estValue * 100).toFixed(1)}% of total booking value` : 'Projected revenue leakage'}</div>
               <div style={{ marginTop: 8, fontSize: 12, color: revColor, fontWeight: 600 }}>{revLabel}</div>
             </div>
 
@@ -191,11 +197,20 @@ export default function DashboardPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, marginBottom: 20 }}>
         <div className="card">
           <div className="card-title" style={{ marginBottom: 4 }}>Monthly Bookings — Risk Distribution</div>
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16 }}>Stacked by risk tier (Low / Medium / High)</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16 }}>
+            {isRolling ? 'Last 12 months — stacked by risk tier' : `${year} by month — stacked by risk tier`}
+          </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={monthlyData} margin={{ top: 0, right: 0, left: -10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-              <XAxis dataKey="month" tickFormatter={m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m, 10) - 1] || m} tick={{ fontSize: 12, fill: '#64748B' }} axisLine={false} tickLine={false} />
+              <XAxis
+                dataKey="label"
+                tickFormatter={(lbl: string) => {
+                  if (isRolling) return lbl; // already "May '25"
+                  const ABBR: Record<string,string> = { January:'Jan',February:'Feb',March:'Mar',April:'Apr',May:'May',June:'Jun',July:'Jul',August:'Aug',September:'Sep',October:'Oct',November:'Nov',December:'Dec' };
+                  return `${ABBR[lbl] || lbl} ${year}`;
+                }}
+                tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} tickFormatter={v => (v / 1000).toFixed(0) + 'k'} />
               <Tooltip content={<CustomTooltip />} />
               <Bar dataKey="low"    name="Low"    stackId="a" fill={COLORS.low} />

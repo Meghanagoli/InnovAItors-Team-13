@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api, getCached } from '../api/client';
-import type { MonthlyRow, PMCEntry, MetaResponse } from '../api/client';
+import type { MonthlyRow, CohortBooking, MetaResponse } from '../api/client';
 
 function RiskBadge({ tier }: { tier: 'High' | 'Medium' | 'Low' }) {
   const cls    = tier === 'High' ? 'badge-high' : tier === 'Medium' ? 'badge-medium' : 'badge-low';
@@ -20,70 +20,66 @@ function ColorCell({ value, total, tier }: { value: number; total: number; tier:
   );
 }
 
-function ExpandedRow({ month, pmcList }: { month: MonthlyRow; pmcList: PMCEntry[] }) {
-  const tierOf = (score: number): 'High' | 'Medium' | 'Low' =>
-    score >= 65 ? 'High' : score >= 35 ? 'Medium' : 'Low';
+function ExpandedRow({ month, year }: { month: MonthlyRow; year: string }) {
+  const [bookings, setBookings] = useState<CohortBooking[] | null>(null);
+  const [fetchError, setFetchError] = useState(false);
 
-  const synth = [
-    { score: month.avgScore + 25, mtti: Math.round(month.avgMtti * 2.2) },
-    { score: month.avgScore + 18, mtti: Math.round(month.avgMtti * 1.9) },
-    { score: month.avgScore + 10, mtti: Math.round(month.avgMtti * 1.5) },
-    { score: month.avgScore,      mtti: month.avgMtti },
-    { score: month.avgScore - 10, mtti: Math.round(month.avgMtti * 0.8) },
-    { score: month.avgScore - 18, mtti: Math.round(month.avgMtti * 0.5) },
-  ].map((s, i) => {
-    const pmc = pmcList[i % Math.max(pmcList.length, 1)];
-    return {
-      ...s,
-      score:   Math.min(100, Math.max(0, s.score)),
-      mtti:    Math.max(0, s.mtti),
-      idx:     i,
-      pmcName: pmc?.name       ?? pmcList[0]?.name       ?? '—',
-      product: pmc?.topProduct ?? pmcList[0]?.topProduct ?? 'RealPage One',
-    };
-  });
+  useEffect(() => {
+    setBookings(null);
+    setFetchError(false);
+    api.cohortBookings(year, month.month)
+      .then(data => { setBookings(data); setFetchError(false); })
+      .catch(() => { setFetchError(true); setBookings([]); });
+  }, [year, month.month]);
 
   return (
     <tr>
       <td colSpan={7} style={{ padding: 0, background: '#F8FAFC' }}>
         <div style={{ padding: '16px 24px', borderTop: '1px solid #E2E8F0' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--text)' }}>
-            Sample Bookings — {month.label} ({month.high.toLocaleString()} high risk shown first)
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: 'white', borderRadius: 8, overflow: 'hidden', border: '1px solid #E2E8F0' }}>
-            <thead>
-              <tr style={{ background: '#F8FAFC' }}>
-                {['Order ID', 'PMC Name', 'Product', 'Risk Score', 'Est. MTTI', 'Tier'].map(h => (
-                  <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B', borderBottom: '1px solid #E2E8F0' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {synth.map(b => {
-                const tier = tierOf(b.score);
-                return (
-                  <tr key={b.idx} style={{ borderBottom: '1px solid #F1F5F9' }}>
-                    <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, color: '#3B82F6', whiteSpace: 'nowrap' }}>O-{2031000 + b.idx + parseInt(month.month || '1') * 100}</td>
-                    <td style={{ padding: '8px 12px', fontWeight: 500, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.pmcName}</td>
-                    <td style={{ padding: '8px 12px', color: '#64748B' }}>{b.product}</td>
-                    <td style={{ padding: '8px 12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 50, background: '#F1F5F9', borderRadius: 3, height: 5, overflow: 'hidden' }}>
-                          <div style={{ width: `${b.score}%`, height: '100%', background: b.score >= 65 ? '#EF4444' : b.score >= 35 ? '#F59E0B' : '#22C55E' }} />
-                        </div>
-                        <span style={{ fontWeight: 600 }}>{b.score}</span>
-                      </div>
-                    </td>
-                    <td style={{ padding: '8px 12px' }}>{b.mtti} days</td>
-                    <td style={{ padding: '8px 12px' }}><RiskBadge tier={tier} /></td>
+          {bookings === null && !fetchError ? (
+            <div style={{ fontSize: 13, color: 'var(--muted)' }}>Loading bookings from BigQuery…</div>
+          ) : fetchError ? (
+            <div style={{ fontSize: 13, color: '#B91C1C' }}>Could not load bookings — backend may need a restart.</div>
+          ) : bookings!.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--muted)' }}>No bookings found in BigQuery for {month.label} {year}.</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--text)' }}>
+                Bookings — {month.label} (highest-risk shown first)
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: 'white', borderRadius: 8, overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                <thead>
+                  <tr style={{ background: '#F8FAFC' }}>
+                    {['Order ID', 'PMC Name', 'Product', 'Risk Score', 'Est. MTTI', 'Tier'].map(h => (
+                      <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B', borderBottom: '1px solid #E2E8F0' }}>{h}</th>
+                    ))}
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>
-            Showing 6 representative bookings of {month.total.toLocaleString()} in {month.label}.
-          </div>
+                </thead>
+                <tbody>
+                  {bookings.map((b, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                      <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, color: '#3B82F6', whiteSpace: 'nowrap' }}>{b.orderId}</td>
+                      <td style={{ padding: '8px 12px', fontWeight: 500, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.pmcName}</td>
+                      <td style={{ padding: '8px 12px', color: '#64748B' }}>{b.product}</td>
+                      <td style={{ padding: '8px 12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ width: 50, background: '#F1F5F9', borderRadius: 3, height: 5, overflow: 'hidden' }}>
+                            <div style={{ width: `${b.score}%`, height: '100%', background: b.score >= 65 ? '#EF4444' : b.score >= 35 ? '#F59E0B' : '#22C55E' }} />
+                          </div>
+                          <span style={{ fontWeight: 600 }}>{b.score}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '8px 12px' }}>{b.mtti} days</td>
+                      <td style={{ padding: '8px 12px' }}><RiskBadge tier={b.tier} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>
+                Showing {bookings.length} of {month.total.toLocaleString()} bookings in {month.label}. Scored by ML model in real time.
+              </div>
+            </>
+          )}
         </div>
       </td>
     </tr>
@@ -96,7 +92,6 @@ export default function CohortPage() {
   const [monthlyData, setMonthlyData] = useState<MonthlyRow[]>(() =>
     _initYear ? getCached<MonthlyRow[]>(`/cohort?year=${_initYear}&sales_type=&territory=&product=&impl_type=`) ?? [] : []
   );
-  const [pmcList, setPmcList]         = useState<PMCEntry[]>(() => getCached<PMCEntry[]>('/allocation?limit=200') ?? []);
   const [loading, setLoading]         = useState(() => !_initYear || !getCached<MonthlyRow[]>(`/cohort?year=${_initYear}&sales_type=&territory=&product=&impl_type=`));
   const [year, setYear]               = useState('');   // '' keeps dropdown on placeholder
   const [years, setYears]             = useState<string[]>(_meta?.years ?? []);
@@ -106,7 +101,6 @@ export default function CohortPage() {
   const activeYear = year || _initYear || years[0] || '2026';
 
   useEffect(() => {
-    api.allocation(200).then(setPmcList).catch(() => {});
     api.meta().then(m => { setYears(m.years); }).catch(() => {});
   }, []);
 
@@ -134,27 +128,6 @@ export default function CohortPage() {
   const toggle = (label: string) => setExpandedMonth(prev => prev === label ? null : label);
 
 
-  const getMonthBookings = (month: MonthlyRow) => [
-    { score: month.avgScore + 25, mtti: Math.round(month.avgMtti * 2.2) },
-    { score: month.avgScore + 18, mtti: Math.round(month.avgMtti * 1.9) },
-    { score: month.avgScore + 10, mtti: Math.round(month.avgMtti * 1.5) },
-    { score: month.avgScore,      mtti: month.avgMtti },
-    { score: month.avgScore - 10, mtti: Math.round(month.avgMtti * 0.8) },
-    { score: month.avgScore - 18, mtti: Math.round(month.avgMtti * 0.5) },
-  ].map((s, i) => {
-    const pmc   = pmcList[i % Math.max(pmcList.length, 1)];
-    const score = Math.min(100, Math.max(0, s.score));
-    return {
-      orderId: `O-${2031000 + i + parseInt(month.month || '1') * 100}`,
-      pmcName: pmc?.name       ?? '—',
-      product: pmc?.topProduct ?? 'RealPage One',
-      score,
-      tier:    score >= 65 ? 'High' : score >= 35 ? 'Medium' : 'Low',
-      mtti:    Math.max(0, s.mtti),
-    };
-  });
-
-
   const pct = (n: number, tot: number) => tot > 0 ? ((n / tot) * 100).toFixed(1) + '%' : '0%';
 
   const exportCSV = () => {
@@ -175,16 +148,6 @@ export default function CohortPage() {
       totals.low, pct(totals.low, totals.total), totals.medium, pct(totals.medium, totals.total),
       totals.high, pct(totals.high, totals.total), overallAvgMtti, overallAvgScore,
     ].map(esc).join(','));
-
-    // Drill-downs for every month
-    monthlyData.forEach(month => {
-      lines.push('');
-      lines.push([`${month.label} — Booking Detail`].map(esc).join(','));
-      lines.push(['Order ID','PMC Name','Product','Risk Score','Tier','Est. MTTI (days)'].map(esc).join(','));
-      getMonthBookings(month).forEach(b => lines.push([
-        b.orderId, b.pmcName, b.product, b.score, b.tier, b.mtti,
-      ].map(esc).join(',')));
-    });
 
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url  = URL.createObjectURL(blob);
@@ -262,7 +225,7 @@ export default function CohortPage() {
                     </div>
                   </td>
                 </tr>
-                {expandedMonth === row.label && <ExpandedRow month={row} pmcList={pmcList} />}
+                {expandedMonth === row.label && <ExpandedRow month={row} year={activeYear} />}
               </React.Fragment>
             ))}
             <tr style={{ background: '#F8FAFC', fontWeight: 700, borderTop: '2px solid #E2E8F0' }}>

@@ -61,7 +61,18 @@ export interface FinanceResponse {
     highValue: number;
     leakage: number;
     avgMtti: number;
+    leakageRate: number;
   };
+}
+
+export interface CohortBooking {
+  orderId: string;
+  pmcName: string;
+  product: string;
+  score: number;
+  mtti: number;
+  tier: 'High' | 'Medium' | 'Low';
+  status: string;
 }
 
 export interface MetaResponse {
@@ -102,11 +113,15 @@ async function get<T>(path: string): Promise<T> {
 export const api = {
   cohort: (year = '2025', salesType = '', territory = '', product = '', implType = '') =>
     get<MonthlyRow[]>(`/cohort?year=${year}&sales_type=${encodeURIComponent(salesType)}&territory=${encodeURIComponent(territory)}&product=${encodeURIComponent(product)}&impl_type=${encodeURIComponent(implType)}`),
+  cohortRolling: () =>
+    get<MonthlyRow[]>('/cohort/rolling12'),
+  cohortBookings: (year: string, month: string) =>
+    get<CohortBooking[]>(`/cohort/bookings?year=${year}&month=${month}`),
   allocation:  (limit = 50)           => get<PMCEntry[]>(`/allocation?limit=${limit}`),
   finance:     (quarter = 'Full Year', year = '2025') => get<FinanceResponse>(`/finance?quarter=${encodeURIComponent(quarter)}&year=${year}`),
   products:    ()                     => get<ProductRow[]>('/products'),
   territories: ()                     => get<TerritoryRow[]>('/territories'),
   options:     ()                     => get<OptionsResponse>('/options'),
   meta:        ()                     => get<MetaResponse>('/meta'),
-  reasons:     (year = '2025')         => get<ReasonsResponse>(`/reasons?year=${year}`),
+  reasons:     (year = '2025')        => get<ReasonsResponse>(`/reasons?year=${year}`),
 };

@@ -5,10 +5,10 @@ import type { PMCEntry } from '../api/client';
 
 // ── Semicircle Risk Gauge ──────────────────────────────────────────
 function SemicircleGauge({ score, tier }: { score: number; tier: 'High' | 'Medium' | 'Low' }) {
-  const cx = 150, cy = 148, r = 95, sw = 28;
+  const cx = 150, cy = 120, r = 88, sw = 24;
   const clamp = Math.max(0, Math.min(100, score));
 
-  // score 0 → angle π (left), score 100 → angle 0 (right)
+  // score 0 → angle π (left end), score 100 → angle 0 (right end)
   const toAngle = (s: number) => Math.PI * (1 - Math.max(0, Math.min(100, s)) / 100);
   const pt = (s: number, radius: number) => {
     const a = toAngle(s);
@@ -22,8 +22,7 @@ function SemicircleGauge({ score, tier }: { score: number; tier: 'High' | 'Mediu
 
   const tierColor = tier === 'High' ? '#EF4444' : tier === 'Medium' ? '#F59E0B' : '#22C55E';
   const tierLabel = tier === 'High' ? 'High Risk' : tier === 'Medium' ? 'Medium Risk' : 'Low Risk';
-  const needlePt  = pt(clamp, r - sw / 2 - 8);
-  const labelPt   = (s: number) => pt(s, r + sw / 2 + 18);
+  const needlePt  = pt(clamp, r - sw / 2 - 6);
 
   return (
     <div>
@@ -32,31 +31,26 @@ function SemicircleGauge({ score, tier }: { score: number; tier: 'High' | 'Mediu
         <span style={{ width: 11, height: 11, borderRadius: '50%', background: tierColor, display: 'inline-block', flexShrink: 0 }} />
         <span style={{ color: tierColor }}>{tierLabel}</span>
       </div>
-      <svg viewBox="0 0 300 176" style={{ width: '100%', maxWidth: 360, display: 'block', margin: '0 auto' }}>
-        {/* Zone background fills */}
-        <path d={arcD(0,   35)}  fill="none" stroke="#DCFCE7" strokeWidth={sw} strokeLinecap="butt" />
-        <path d={arcD(35,  65)}  fill="none" stroke="#FEF3C7" strokeWidth={sw} strokeLinecap="butt" />
-        <path d={arcD(65, 100)}  fill="none" stroke="#FEE2E2" strokeWidth={sw} strokeLinecap="butt" />
-        {/* Zone border outlines */}
-        <path d={arcD(0,   35)}  fill="none" stroke="#86EFAC" strokeWidth={1.5} strokeLinecap="butt" />
-        <path d={arcD(35,  65)}  fill="none" stroke="#FCD34D" strokeWidth={1.5} strokeLinecap="butt" />
-        <path d={arcD(65, 100)}  fill="none" stroke="#FCA5A5" strokeWidth={1.5} strokeLinecap="butt" />
-        {/* Score fill arc */}
-        {clamp > 0 && (
-          <path d={arcD(0, Math.min(clamp, 99.9))} fill="none" stroke={tierColor} strokeWidth={sw} strokeLinecap="butt" opacity={0.82} />
-        )}
-        {/* Tick labels: 0, 50, 100 */}
-        {([0, 50, 100] as const).map(s => {
-          const lp  = labelPt(s);
-          const anchor = s === 0 ? 'end' : s === 100 ? 'start' : 'middle';
-          return <text key={s} x={lp.x} y={lp.y} textAnchor={anchor} dominantBaseline="middle" fontSize="11" fill="#94A3B8">{s}</text>;
-        })}
-        {/* Score number */}
-        <text x={cx} y={cy - 30} textAnchor="middle" dominantBaseline="middle" fontSize="44" fontWeight="700" fill="#1E293B" fontFamily="sans-serif">{clamp}</text>
-        {/* Needle */}
+      <svg viewBox="0 0 300 195" style={{ width: '100%', maxWidth: 360, display: 'block', margin: '0 auto' }}>
+        {/* Zone bands */}
+        <path d={arcD(0,   35)} fill="none" stroke="#DCFCE7" strokeWidth={sw} strokeLinecap="butt" />
+        <path d={arcD(35,  65)} fill="none" stroke="#FEF3C7" strokeWidth={sw} strokeLinecap="butt" />
+        <path d={arcD(65, 100)} fill="none" stroke="#FEE2E2" strokeWidth={sw} strokeLinecap="butt" />
+        {/* Zone outlines */}
+        <path d={arcD(0,   35)} fill="none" stroke="#86EFAC" strokeWidth={1.5} strokeLinecap="butt" />
+        <path d={arcD(35,  65)} fill="none" stroke="#FCD34D" strokeWidth={1.5} strokeLinecap="butt" />
+        <path d={arcD(65, 100)} fill="none" stroke="#FCA5A5" strokeWidth={1.5} strokeLinecap="butt" />
+        {/* Tick labels at arc ends + top */}
+        <text x={pt(0,   r + sw / 2 + 14).x} y={pt(0,   r + sw / 2 + 14).y} textAnchor="end"    dominantBaseline="middle" fontSize="11" fill="#94A3B8">0</text>
+        <text x={pt(50,  r + sw / 2 + 14).x} y={pt(50,  r + sw / 2 + 14).y} textAnchor="middle" dominantBaseline="middle" fontSize="11" fill="#94A3B8">50</text>
+        <text x={pt(100, r + sw / 2 + 14).x} y={pt(100, r + sw / 2 + 14).y} textAnchor="start"  dominantBaseline="middle" fontSize="11" fill="#94A3B8">100</text>
+        {/* Needle — drawn before pivot circle so circle sits on top */}
         <line x1={cx} y1={cy} x2={needlePt.x} y2={needlePt.y} stroke="#374151" strokeWidth={2.5} strokeLinecap="round" />
-        <circle cx={cx} cy={cy} r={7} fill="#374151" />
-        <circle cx={cx} cy={cy} r={3.5} fill="white" />
+        {/* Pivot */}
+        <circle cx={cx} cy={cy} r={8} fill="#374151" />
+        <circle cx={cx} cy={cy} r={4} fill="white" />
+        {/* Score number — below pivot, clearly separated from needle */}
+        <text x={cx} y={cy + 38} textAnchor="middle" dominantBaseline="middle" fontSize="44" fontWeight="700" fill="#1E293B" fontFamily="sans-serif">{clamp}</text>
       </svg>
     </div>
   );
@@ -171,6 +165,7 @@ const defaultInputs: ScorerInputs = {
   totalOrders:        0,
   selectedSolutions:  [],
   numSolutions:       0,
+  netExtYear1Charge:  0,
 };
 
 export default function ScorerPage() {
@@ -283,7 +278,7 @@ export default function ScorerPage() {
           pmc_total_units:        inputs.omsUnits,
           num_existing_solutions: inputs.numSolutions,
           sol_pm_primary:         primarySolution,
-          net_ext_year1_charge:   0,
+          net_ext_year1_charge:   inputs.netExtYear1Charge,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -307,15 +302,85 @@ export default function ScorerPage() {
 
   const tierColor = result ? (result.tier === 'High' ? '#EF4444' : result.tier === 'Medium' ? '#F59E0B' : '#22C55E') : '#3B82F6';
 
+  const exportCSV = () => {
+    if (!result) return;
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const row = (label: string, value: unknown) => [esc(label), esc(value)].join(',');
+    const lines: string[] = [];
+
+    lines.push(row('Exported', new Date().toLocaleString()));
+    lines.push('');
+
+    lines.push('"--- Booking Inputs ---"');
+    if (selectedClient) lines.push(row('Client Name', selectedClient.name));
+    lines.push(row('Sales Type',           inputs.salesType));
+    lines.push(row('Implementation Type',  inputs.implementationType));
+    lines.push(row('Product Family',       inputs.productFamily));
+    lines.push(row('Business Type',        inputs.businessType));
+    lines.push(row('Territory',            inputs.territory));
+    lines.push(row('Total Sites',          inputs.omsSites));
+    lines.push(row('Total Units',          inputs.omsUnits));
+    lines.push(row('Order Requests',       inputs.totalOrders));
+    if (inputs.netExtYear1Charge > 0)
+      lines.push(row('Year 1 Contract Value ($)', inputs.netExtYear1Charge));
+    lines.push(row('Existing Solutions',   inputs.selectedSolutions.join('; ')));
+    lines.push(row('# Solutions',          inputs.selectedSolutions.length));
+    lines.push('');
+
+    lines.push('"--- Score Results ---"');
+    lines.push(row('Risk Score',       result.score));
+    lines.push(row('Risk Tier',        result.tier));
+    lines.push(row('Predicted MTTI (days)', result.mtti));
+
+    if (inputs.netExtYear1Charge > 0) {
+      const charge   = inputs.netExtYear1Charge;
+      const atRisk   = Math.round(charge * (result.score / 100));
+      lines.push(row('Revenue at Risk ($)',   atRisk));
+      lines.push(row('Expected Revenue ($)',  charge - atRisk));
+    }
+    lines.push('');
+
+    lines.push('"--- Top Risk Factors ---"');
+    lines.push([esc('Factor'), esc('Points')].join(','));
+    result.factors.forEach(f => lines.push([esc(f.name), esc(f.points)].join(',')));
+    lines.push('');
+
+    lines.push('"--- Recommendation ---"');
+    lines.push(row('Action', result.recommendation));
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `scorer-result-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const SectionLabel = ({ children }: { children: React.ReactNode }) => (
     <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94A3B8', marginBottom: 10, marginTop: 4 }}>{children}</div>
   );
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div className="page-title">Score a Booking</div>
-        <div className="page-subtitle">Enter booking details to get an instant AI risk assessment</div>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <div className="page-title">Score a Booking</div>
+          <div className="page-subtitle">Enter booking details to get an instant AI risk assessment</div>
+        </div>
+        <button
+          onClick={exportCSV}
+          disabled={!result}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 14px', background: result ? '#1E293B' : '#94A3B8',
+            color: 'white', border: 'none', borderRadius: 8,
+            fontSize: 13, fontWeight: 600,
+            cursor: result ? 'pointer' : 'not-allowed',
+            transition: 'background 0.15s',
+          }}>
+          ↓ Export CSV
+        </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '440px 1fr', gap: 24, alignItems: 'start' }}>
@@ -434,7 +499,7 @@ export default function ScorerPage() {
 
             {/* Scale */}
             <SectionLabel>Scale</SectionLabel>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 4 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
               <div className="form-group">
                 <label className="form-label">Total Sites</label>
                 <input className="form-input" type="number" value={inputs.omsSites} onChange={set('omsSites')} min={0} />
@@ -447,6 +512,10 @@ export default function ScorerPage() {
                 <label className="form-label">Order Requests</label>
                 <input className="form-input" type="number" value={inputs.totalOrders} onChange={set('totalOrders')} min={1} max={20} />
               </div>
+            </div>
+            <div className="form-group" style={{ marginBottom: 4 }}>
+              <label className="form-label">Year 1 Contract Value ($) <span style={{ color: '#94A3B8', fontWeight: 400 }}>optional</span></label>
+              <input className="form-input" type="number" value={inputs.netExtYear1Charge || ''} onChange={set('netExtYear1Charge')} min={0} placeholder="e.g. 45000" />
             </div>
 
             {/* Solutions */}
@@ -531,14 +600,37 @@ export default function ScorerPage() {
                     <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8', marginBottom: 6 }}>Est. Time to Implement</div>
                     <div style={{ fontSize: 38, fontWeight: 800, color: tierColor, lineHeight: 1 }}>{result.mtti}</div>
                     <div style={{ fontSize: 13, color: '#64748B', marginTop: 4 }}>days</div>
-                    {inputs.selectedSolutions.length > 0 && (
-                      <div style={{ marginTop: 10, fontSize: 11, color: '#94A3B8', background: '#F8FAFC', borderRadius: 6, padding: '4px 8px', lineHeight: 1.4 }}>
-                        {inputs.selectedSolutions.length === 1 ? inputs.selectedSolutions[0] : `${inputs.selectedSolutions.length} solutions`}
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
+
+              {/* Financial Impact — shown only when Year 1 charge was provided */}
+              {inputs.netExtYear1Charge > 0 && (() => {
+                const charge    = inputs.netExtYear1Charge;
+                const atRisk    = Math.round(charge * (result.score / 100));
+                const expected  = charge - atRisk;
+                const fmt$      = (n: number) => n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `$${(n / 1_000).toFixed(0)}K` : `$${n.toLocaleString()}`;
+                return (
+                  <div className="card" style={{ borderTop: `3px solid ${tierColor}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                      <div style={{ width: 4, height: 16, borderRadius: 2, background: tierColor }} />
+                      <div className="card-title" style={{ margin: 0 }}>Financial Impact</div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                      <div style={{ borderLeft: `3px solid ${tierColor}`, paddingLeft: 12 }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6B7E94', marginBottom: 4 }}>Revenue at Risk</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: tierColor }}>{fmt$(atRisk)}</div>
+                        <div style={{ fontSize: 11, color: '#6B7E94', marginTop: 2 }}>{result.score}% of {fmt$(charge)} Year 1 value</div>
+                      </div>
+                      <div style={{ borderLeft: '3px solid #1F8A4C', paddingLeft: 12 }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#6B7E94', marginBottom: 4 }}>Expected Revenue</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: '#1F8A4C' }}>{fmt$(expected)}</div>
+                        <div style={{ fontSize: 11, color: '#6B7E94', marginTop: 2 }}>Risk-adjusted Year 1 projection</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Risk factors */}
               <div className="card">

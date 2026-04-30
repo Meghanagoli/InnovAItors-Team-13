@@ -3,7 +3,6 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { api, getCached } from '../api/client';
 import type { FinanceResponse, MetaResponse } from '../api/client';
 
-const LEAKAGE_RATE = 0.37;
 const QUARTERS = ['Full Year', 'Q1', 'Q2', 'Q3', 'Q4'] as const;
 
 function fmt(n: number) {
@@ -145,7 +144,7 @@ export default function FinancePage() {
         <div className="kpi-card">
           <div className="kpi-label">Projected Revenue Leakage</div>
           <div className="kpi-value" style={{ color: '#EF4444' }}>{fmt(totals.leakage)}</div>
-          <div className="kpi-sub">{(LEAKAGE_RATE * 100).toFixed(0)}% historical non-conversion rate</div>
+          <div className="kpi-sub">{totals.estValue > 0 ? ((totals.leakage / totals.estValue) * 100).toFixed(1) : '0.0'}% of total booking value</div>
           <div className="kpi-trend bad">Finance reforecast recommended</div>
         </div>
       </div>
@@ -297,7 +296,7 @@ export default function FinancePage() {
         </div>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
-        Leakage estimate based on {(LEAKAGE_RATE * 100).toFixed(0)}% historical non-conversion rate for high-risk bookings.
+        Leakage = {totals.estValue > 0 ? ((totals.leakage / totals.estValue) * 100).toFixed(1) : '0.0'}% of total booking value — {totals.leakageRate ? (totals.leakageRate * 100).toFixed(0) : '—'}% non-conversion rate applied to {totals.estValue > 0 ? ((totals.highValue / totals.estValue) * 100).toFixed(1) : '0.0'}% high-risk share.
       </div>
     </div>
   );
