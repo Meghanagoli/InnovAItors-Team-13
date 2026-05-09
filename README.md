@@ -64,7 +64,7 @@
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+git clone https://github.com/Meghanagoli/InnovAItors-Team-13.git
 cd YOUR_REPO_NAME
 ```
 
